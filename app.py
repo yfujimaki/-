@@ -5,12 +5,15 @@ Claude (Anthropic API) が要約・やさしい解説・背景・賛否論点・
 30秒版などを生成して表示する、個人利用向けのStreamlitアプリ。
 """
 
+import datetime
 import json
 import os
 import re
 
 import streamlit as st
 from anthropic import Anthropic
+
+import db
 
 DIFFICULTY_OPTIONS = ["小学生にも分かる", "一般向け", "管理職向け", "経営会議向け"]
 LENGTH_OPTIONS = ["30秒", "1分", "詳しく", "社内説明用"]
@@ -168,9 +171,26 @@ def render_analysis(data):
                 st.write(item.get("explanation", ""))
 
 
-def main():
-    st.set_page_config(page_title="日経記事 かんたん解説アプリ", page_icon="📰", layout="wide")
+def render_history():
+    st.title("📚 保存済みの記事解説を検索")
+    keyword = st.text_input("キーワードで検索（タイトル・本文・解説内容を対象）")
+    rows = db.search_entries(keyword)
+    st.caption(f"{len(rows)} 件見つかりました")
 
+    for row in rows:
+        data = json.loads(row["analysis_json"])
+        summary = " / ".join(data.get("summary_3lines", []))
+        title = row["title"] or "(無題)"
+        with st.expander(f"{row['created_at']}｜{title}"):
+            if summary:
+                st.caption(summary)
+            render_analysis(data)
+            if st.button("この記事を削除", key=f"delete_{row['id']}"):
+                db.delete_entry(row["id"])
+                st.rerun()
+
+
+def render_new_analysis():
     with st.sidebar:
         st.header("設定")
         api_key_input = st.text_input(
@@ -226,6 +246,20 @@ def main():
                     st.session_state["article_title"] = article_title
                     st.session_state["article_body"] = article_body
                     st.session_state["qa_history"] = []
+                    db.save_entry(
+                        created_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                        title=article_title,
+                        body=article_body,
+                        focus_point=focus_point,
+                        extra_instruction=extra_instruction,
+                        difficulty=difficulty,
+                        length=length,
+                        management_view=management_view,
+                        own_company=own_company,
+                        model=model,
+                        analysis_json=json.dumps(data, ensure_ascii=False),
+                    )
+                    st.toast("解説を保存しました。")
 
     data = st.session_state.get("analysis")
     if data:
@@ -267,6 +301,19 @@ def main():
         for q, a in reversed(st.session_state["qa_history"]):
             st.markdown(f"**Q: {q}**")
             st.write(a)
+
+
+def main():
+    st.set_page_config(page_title="日経記事 かんたん解説アプリ", page_icon="📰", layout="wide")
+    db.init_db()
+
+    page = st.sidebar.radio("メニュー", ["📝 新規解説", "📚 保存済みを検索"])
+    st.sidebar.divider()
+
+    if page == "📝 新規解説":
+        render_new_analysis()
+    else:
+        render_history()
 
 
 if __name__ == "__main__":
