@@ -7,12 +7,14 @@ Claude (Anthropic API) が要約・やさしい解説・背景・賛否論点・
 
 import base64
 import datetime
+import io
 import json
 import os
 import re
 
 import streamlit as st
 from anthropic import Anthropic
+from streamlit_paste_button import paste_image_button
 
 import db
 
@@ -130,16 +132,17 @@ def call_model(client, model, system_prompt, user_prompt, max_tokens=4000):
     return "".join(block.text for block in response.content if block.type == "text")
 
 
-def extract_article_from_images(client, model, uploaded_images):
+def extract_article_from_images(client, model, images):
+    """images: (image_bytes, media_type) のタプルのリスト"""
     content = []
-    for image in uploaded_images:
+    for image_bytes, media_type in images:
         content.append(
             {
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": image.type,
-                    "data": base64.standard_b64encode(image.getvalue()).decode("utf-8"),
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(image_bytes).decode("utf-8"),
                 },
             }
         )
@@ -251,13 +254,30 @@ def render_new_analysis():
 
     with st.expander("📷 画像から読み込む（任意・記事のスクリーンショットからタイトル/本文を自動入力）"):
         uploaded_images = st.file_uploader(
-            "記事のスクリーンショット画像（複数可。長い記事は分割して撮影したものをまとめて選択してください）",
+            "ファイルから選択（複数可。長い記事は分割して撮影したものをまとめて選択してください）",
             type=["png", "jpg", "jpeg"],
             accept_multiple_files=True,
         )
+
+        st.caption("または、スクリーンショットをコピーした直後にボタンを押すとクリップボードから直接貼り付けられます。")
+        paste_result = paste_image_button(
+            label="📋 クリップボードから貼り付け",
+            key="paste_article_image",
+        )
+        if paste_result.image_data is not None:
+            st.image(paste_result.image_data, caption="貼り付けた画像", width=200)
+
         if st.button("画像から読み込む"):
-            if not uploaded_images:
-                st.error("画像を選択してください。")
+            images = []
+            for uploaded in uploaded_images or []:
+                images.append((uploaded.getvalue(), uploaded.type))
+            if paste_result.image_data is not None:
+                buffer = io.BytesIO()
+                paste_result.image_data.save(buffer, format="PNG")
+                images.append((buffer.getvalue(), "image/png"))
+
+            if not images:
+                st.error("画像をファイルから選択するか、クリップボードから貼り付けてください。")
             else:
                 client = get_client()
                 if not client:
@@ -265,7 +285,7 @@ def render_new_analysis():
                 else:
                     with st.spinner("画像から文字を読み取っています..."):
                         try:
-                            extracted = extract_article_from_images(client, model, uploaded_images)
+                            extracted = extract_article_from_images(client, model, images)
                         except Exception as e:
                             st.error(f"読み取りに失敗しました: {e}")
                         else:
