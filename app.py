@@ -5,6 +5,7 @@ Claude (Anthropic API) が要約・やさしい解説・背景・賛否論点・
 30秒版などを生成して表示する、個人利用向けのStreamlitアプリ。
 """
 
+import base64
 import datetime
 import json
 import os
@@ -80,6 +81,15 @@ QA_SYSTEM_TEMPLATE = """あなたは以下の日経新聞記事について、�
 {analysis_json}
 """
 
+IMAGE_OCR_SYSTEM = """あなたは新聞記事のスクリーンショット画像から、記事のタイトルと本文を正確に書き起こすアシスタントです。
+複数の画像が渡された場合は、記事の流れとして自然な順番につなげて本文を構成してください。
+広告・ナビゲーションメニュー・関連記事リンクなど、記事本文以外の要素は無視してください。
+文字が不鮮明で判読できない箇所は無理に補完せず、「（判読不能）」と記してください。
+必ず次のJSON形式のみを出力してください（説明文やコードフェンスは不要）。
+
+{"title": "記事タイトル", "body": "記事本文全文"}
+"""
+
 
 def get_client():
     api_key = st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
@@ -118,6 +128,31 @@ def call_model(client, model, system_prompt, user_prompt, max_tokens=4000):
         messages=[{"role": "user", "content": user_prompt}],
     )
     return "".join(block.text for block in response.content if block.type == "text")
+
+
+def extract_article_from_images(client, model, uploaded_images):
+    content = []
+    for image in uploaded_images:
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": image.type,
+                    "data": base64.standard_b64encode(image.getvalue()).decode("utf-8"),
+                },
+            }
+        )
+    content.append({"type": "text", "text": "画像の記事内容をタイトルと本文に書き起こしてください。"})
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=4000,
+        system=IMAGE_OCR_SYSTEM,
+        messages=[{"role": "user", "content": content}],
+    )
+    raw = "".join(block.text for block in response.content if block.type == "text")
+    return extract_json(raw)
 
 
 def render_analysis(data):
@@ -214,8 +249,33 @@ def render_new_analysis():
     st.title("📰 日経記事 かんたん解説アプリ")
     st.caption("日経電子版で契約している記事の本文をコピーして貼り付け、要約・解説を生成します。")
 
-    article_title = st.text_input("記事タイトル")
-    article_body = st.text_area("記事本文（コピーして貼り付け）", height=300)
+    with st.expander("📷 画像から読み込む（任意・記事のスクリーンショットからタイトル/本文を自動入力）"):
+        uploaded_images = st.file_uploader(
+            "記事のスクリーンショット画像（複数可。長い記事は分割して撮影したものをまとめて選択してください）",
+            type=["png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+        )
+        if st.button("画像から読み込む"):
+            if not uploaded_images:
+                st.error("画像を選択してください。")
+            else:
+                client = get_client()
+                if not client:
+                    st.error("サイドバーでAnthropic APIキーを入力してください。")
+                else:
+                    with st.spinner("画像から文字を読み取っています..."):
+                        try:
+                            extracted = extract_article_from_images(client, model, uploaded_images)
+                        except Exception as e:
+                            st.error(f"読み取りに失敗しました: {e}")
+                        else:
+                            st.session_state["article_title_input"] = extracted.get("title", "")
+                            st.session_state["article_body_input"] = extracted.get("body", "")
+                            st.success("画像から読み込みました。内容を確認・修正してから解説してください。")
+                            st.rerun()
+
+    article_title = st.text_input("記事タイトル", key="article_title_input")
+    article_body = st.text_area("記事本文（コピーして貼り付け、または画像から読み込み）", height=300, key="article_body_input")
     focus_point = st.text_input("特に知りたいこと（任意）")
     extra_instruction = st.text_input("追加指示（任意・例: 会社経営への影響も知りたい）")
 
