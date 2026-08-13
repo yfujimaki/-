@@ -28,6 +28,7 @@ SYSTEM_PROMPT = """あなたは日本経済新聞の記事を読者にわかり�
 
 スキーマ:
 {{
+  "detected_title": "記事の見出し。ユーザーがタイトル欄に入力していればその内容をそのまま返す。タイトル欄が空欄の場合は、本文の中から実際の見出しと思われる一文を判別して返す（本文の先頭に日付やカテゴリ名などのノイズがあっても、それらと見出しを混同しないこと）",
   "summary_3lines": ["1行目", "2行目", "3行目"],
   "easy_explanation": "「この記事は、簡単にいうと〇〇という話です。」という書き出しで始まる、専門用語を減らした説明",
   "background": "なぜ今この問題・出来事が起きているのかの背景・経緯",
@@ -55,6 +56,7 @@ SYSTEM_PROMPT = """あなたは日本経済新聞の記事を読者にわかり�
 - glossaryには記事中の専門用語・難解な語（例: 公費、給付付き税額控除、現役並み所得 など）を最大5個、記事に登場したものだけ抽出する。該当語がなければ空配列でよい。
 - pros_consは政策・制度・規制など賛否が分かれるテーマの記事のみapplicable=trueとし、それ以外（企業業績・単純な出来事の記事など）はfalseにしてpros/consは空配列にする。
 - 事実は記事本文の範囲で書き、記事に書かれていない推測は「〜と考えられます」等、推測とわかる書き方にする。
+- detected_titleの判別は最優先で正確に行うこと。本文の1行目が日付やセクション名の場合はスキップし、実際の見出しらしい文を探すこと。
 {extra_instruction_note}{focus_note}{management_note}
 """
 
@@ -433,13 +435,14 @@ def render_new_analysis():
                 except Exception as e:
                     st.error(f"生成に失敗しました: {e}")
                 else:
+                    final_title = article_title.strip() or data.get("detected_title", "").strip()
                     st.session_state["analysis"] = data
-                    st.session_state["article_title"] = article_title
+                    st.session_state["article_title"] = final_title
                     st.session_state["article_body"] = article_body
                     st.session_state["qa_history"] = []
                     db.save_entry(
                         created_at=datetime.datetime.now().isoformat(timespec="seconds"),
-                        title=article_title,
+                        title=final_title,
                         body=article_body,
                         focus_point=focus_point,
                         extra_instruction=extra_instruction,
@@ -450,11 +453,17 @@ def render_new_analysis():
                         model=model,
                         analysis_json=json.dumps(data, ensure_ascii=False),
                     )
+                    if not article_title.strip() and final_title:
+                        st.session_state["article_title_input"] = final_title
                     st.toast("解説を保存しました。")
+                    if not article_title.strip() and final_title:
+                        st.rerun()
 
     data = st.session_state.get("analysis")
     if data:
         st.divider()
+        if st.session_state.get("article_title"):
+            st.subheader(f"📰 {st.session_state['article_title']}")
         render_analysis(data)
 
         st.divider()
