@@ -278,7 +278,7 @@ def render_headline_pickup():
                 st.rerun()
 
     registered_keywords = "、".join(kw["keyword"] for kw in db.list_keywords())
-    default_interest = registered_keywords or "ニチロ、食品・水産業、製造業、人件費・社会保険料、税制・設備投資、顧客企業への影響"
+    default_interest = registered_keywords or "ニチロ、ディーゼルエンジン用フィルタ、建設機械・農業機械、船舶、ターボチャージャー、人件費・社会保険料、税制・設備投資、顧客企業への影響"
     interest = st.text_input(
         "関心テーマ・キーワード",
         value=default_interest,
