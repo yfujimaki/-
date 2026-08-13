@@ -92,6 +92,25 @@ IMAGE_OCR_SYSTEM = """あなたは新聞記事のスクリーンショット画�
 {"title": "記事タイトル", "body": "記事本文全文"}
 """
 
+HEADLINE_PICKUP_SYSTEM = """あなたは、ユーザーが日本経済新聞のウェブページからコピーした雑多なテキスト
+（見出し一覧に、ナビゲーションメニューや日付、広告文言などが混在したもの）を読み、
+その中から実際の記事見出しだけを抽出し、さらに指定された関心テーマに関連する見出しだけを選び出すアシスタントです。
+
+必ず次のJSON形式のみを出力してください（説明文やコードフェンスは不要）。
+
+{{
+  "picked": [
+    {{"title": "見出し", "reason": "関連すると判断した理由（1文程度）"}}
+  ]
+}}
+
+ルール:
+- 「ログイン」「会員登録」「もっと見る」などのメニュー・ボタン文言、日付、広告は見出しとして扱わず無視すること。
+- 関心テーマ「{interest}」に明確に関連する見出しのみを選ぶこと。関連が薄い、または一般的すぎるものは含めない。
+- 該当する見出しがなければ picked は空配列にすること。
+- 見出しの文言は元のテキストのまま、改変せず抜き出すこと。
+"""
+
 
 def get_client():
     api_key = st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
@@ -158,6 +177,13 @@ def extract_article_from_images(client, model, images):
     return extract_json(raw)
 
 
+def pickup_headlines(client, model, pasted_text, interest):
+    system_prompt = HEADLINE_PICKUP_SYSTEM.format(interest=interest)
+    user_prompt = f"# 貼り付けられたテキスト\n{pasted_text}"
+    raw = call_model(client, model, system_prompt, user_prompt, max_tokens=2000)
+    return extract_json(raw)
+
+
 def render_analysis(data):
     st.subheader("1. 3行要約")
     for line in data.get("summary_3lines", []):
@@ -209,6 +235,83 @@ def render_analysis(data):
                 st.write(item.get("explanation", ""))
 
 
+def render_api_and_model_sidebar():
+    st.header("設定")
+    api_key_input = st.text_input(
+        "Anthropic APIキー",
+        type="password",
+        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+        help="環境変数 ANTHROPIC_API_KEY が設定済みなら空欄のままで構いません。",
+    )
+    if api_key_input:
+        st.session_state["api_key"] = api_key_input
+    return st.selectbox("モデル", MODEL_OPTIONS, index=0)
+
+
+def render_headline_pickup():
+    with st.sidebar:
+        model = render_api_and_model_sidebar()
+
+    st.title("🔍 見出しピックアップ")
+    st.caption(
+        "日経電子版のトップページや一覧画面から見出しの並びをまとめてコピーして貼り付けると、"
+        "関心テーマに関連する見出しだけをClaudeが抜き出します（記事本文の自動取得は行いません）。"
+    )
+
+    with st.expander("🔑 登録キーワード", expanded=False):
+        st.caption("よく調べたいキーワードを登録しておくと、下の「関心テーマ・キーワード」に自動で反映されます。")
+        col_add, col_btn = st.columns([4, 1])
+        with col_add:
+            new_keyword = st.text_input("キーワードを追加", key="new_keyword_input", label_visibility="collapsed", placeholder="例: ニチロ")
+        with col_btn:
+            if st.button("追加"):
+                if new_keyword.strip():
+                    db.add_keyword(new_keyword, datetime.datetime.now().isoformat(timespec="seconds"))
+                    st.rerun()
+
+        registered = db.list_keywords()
+        for kw in registered:
+            kw_col, del_col = st.columns([5, 1])
+            kw_col.write(kw["keyword"])
+            if del_col.button("削除", key=f"delete_keyword_{kw['id']}"):
+                db.delete_keyword(kw["id"])
+                st.rerun()
+
+    registered_keywords = "、".join(kw["keyword"] for kw in db.list_keywords())
+    default_interest = registered_keywords or "ニチロ、食品・水産業、製造業、人件費・社会保険料、税制・設備投資、顧客企業への影響"
+    interest = st.text_input(
+        "関心テーマ・キーワード",
+        value=default_interest,
+        help="どんな観点で見出しを絞り込みたいか、キーワードや文章で入力してください。登録キーワードがあれば自動で反映されます。",
+    )
+    pasted_text = st.text_area("日経のページからコピーした見出し一覧を貼り付け", height=300)
+
+    if st.button("ピックアップする", type="primary"):
+        client = get_client()
+        if not client:
+            st.error("サイドバーでAnthropic APIキーを入力してください。")
+        elif not pasted_text.strip():
+            st.error("見出し一覧を貼り付けてください。")
+        else:
+            with st.spinner("関連する見出しを探しています..."):
+                try:
+                    result = pickup_headlines(client, model, pasted_text, interest)
+                except Exception as e:
+                    st.error(f"抽出に失敗しました: {e}")
+                else:
+                    st.session_state["picked_headlines"] = result.get("picked", [])
+
+    picked = st.session_state.get("picked_headlines")
+    if picked is not None:
+        st.divider()
+        if picked:
+            st.subheader(f"関連しそうな見出し（{len(picked)}件）")
+            for item in picked:
+                st.markdown(f"- **{item.get('title', '')}**\n  {item.get('reason', '')}")
+        else:
+            st.info("関連する見出しは見つかりませんでした。")
+
+
 def render_history():
     st.title("📚 保存済みの記事解説を検索")
     keyword = st.text_input("キーワードで検索（タイトル・本文・解説内容を対象）")
@@ -230,17 +333,7 @@ def render_history():
 
 def render_new_analysis():
     with st.sidebar:
-        st.header("設定")
-        api_key_input = st.text_input(
-            "Anthropic APIキー",
-            type="password",
-            value=os.environ.get("ANTHROPIC_API_KEY", ""),
-            help="環境変数 ANTHROPIC_API_KEY が設定済みなら空欄のままで構いません。",
-        )
-        if api_key_input:
-            st.session_state["api_key"] = api_key_input
-
-        model = st.selectbox("モデル", MODEL_OPTIONS, index=0)
+        model = render_api_and_model_sidebar()
         st.divider()
         difficulty = st.select_slider("難易度", DIFFICULTY_OPTIONS, value="一般向け")
         length = st.select_slider("出力の長さ", LENGTH_OPTIONS, value="1分")
@@ -387,11 +480,13 @@ def main():
     st.set_page_config(page_title="日経記事 かんたん解説アプリ", page_icon="📰", layout="wide")
     db.init_db()
 
-    page = st.sidebar.radio("メニュー", ["📝 新規解説", "📚 保存済みを検索"])
+    page = st.sidebar.radio("メニュー", ["📝 新規解説", "🔍 見出しピックアップ", "📚 保存済みを検索"])
     st.sidebar.divider()
 
     if page == "📝 新規解説":
         render_new_analysis()
+    elif page == "🔍 見出しピックアップ":
+        render_headline_pickup()
     else:
         render_history()
 

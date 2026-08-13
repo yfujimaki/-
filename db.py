@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS articles (
     model TEXT NOT NULL DEFAULT '',
     analysis_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS keywords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyword TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -31,7 +37,7 @@ def get_connection(db_path=DB_PATH):
 
 def init_db(db_path=DB_PATH):
     with get_connection(db_path) as conn:
-        conn.execute(SCHEMA)
+        conn.executescript(SCHEMA)
 
 
 def save_entry(
@@ -102,3 +108,27 @@ def get_entry(entry_id, db_path=DB_PATH):
 def delete_entry(entry_id, db_path=DB_PATH):
     with get_connection(db_path) as conn:
         conn.execute("DELETE FROM articles WHERE id = ?", (entry_id,))
+
+
+def add_keyword(keyword, created_at, db_path=DB_PATH):
+    keyword = keyword.strip()
+    if not keyword:
+        return
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO keywords (keyword, created_at) VALUES (?, ?)",
+            (keyword, created_at),
+        )
+
+
+def list_keywords(db_path=DB_PATH):
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM keywords ORDER BY created_at ASC"
+        ).fetchall()
+        return rows
+
+
+def delete_keyword(keyword_id, db_path=DB_PATH):
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM keywords WHERE id = ?", (keyword_id,))
