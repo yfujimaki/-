@@ -345,11 +345,29 @@ def render_new_analysis():
     st.title("📰 日経記事 かんたん解説アプリ")
     st.caption("日経電子版で契約している記事の本文をコピーして貼り付け、要約・解説を生成します。")
 
+    if "uploader_version" not in st.session_state:
+        st.session_state["uploader_version"] = 0
+
+    if st.button("🗑 すべてクリアして次の記事へ"):
+        st.session_state["article_title_input"] = ""
+        st.session_state["article_body_input"] = ""
+        st.session_state["focus_point_input"] = ""
+        st.session_state["extra_instruction_input"] = ""
+        st.session_state["analysis"] = None
+        st.session_state["qa_history"] = []
+        st.session_state.pop("article_title", None)
+        st.session_state.pop("article_body", None)
+        st.session_state.pop("qa_input", None)
+        st.session_state.pop("paste_article_image", None)
+        st.session_state["uploader_version"] += 1
+        st.rerun()
+
     with st.expander("📷 画像から読み込む（任意・記事のスクリーンショットからタイトル/本文を自動入力）"):
         uploaded_images = st.file_uploader(
             "ファイルから選択（複数可。長い記事は分割して撮影したものをまとめて選択してください）",
             type=["png", "jpg", "jpeg"],
             accept_multiple_files=True,
+            key=f"uploaded_images_{st.session_state['uploader_version']}",
         )
 
         st.caption("または、スクリーンショットをコピーした直後にボタンを押すとクリップボードから直接貼り付けられます。")
@@ -389,8 +407,8 @@ def render_new_analysis():
 
     article_title = st.text_input("記事タイトル", key="article_title_input")
     article_body = st.text_area("記事本文（コピーして貼り付け、または画像から読み込み）", height=300, key="article_body_input")
-    focus_point = st.text_input("特に知りたいこと（任意）")
-    extra_instruction = st.text_input("追加指示（任意・例: 会社経営への影響も知りたい）")
+    focus_point = st.text_input("特に知りたいこと（任意）", key="focus_point_input")
+    extra_instruction = st.text_input("追加指示（任意・例: 会社経営への影響も知りたい）", key="extra_instruction_input")
 
     if "analysis" not in st.session_state:
         st.session_state["analysis"] = None
